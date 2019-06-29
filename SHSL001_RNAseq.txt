@@ -1,0 +1,1163 @@
+##### BLIND RNAseq for Sorghum Btx623 Panicles #####
+
+#### Sequencing run SHSL001 ####
+
+### Executed on CyVerse Atomosphere ###
+## RNAseq Alignment and Counting v3.0 ##
+
+#[---PUSHOVER API---]
+
+curl -s \
+--form-string 'token=aevxen171z5m92aup3vjg2erru9sux' \
+--form-string 'user=uq6kwmt6sqhkb7b5ur4pk7k86bi4wa' \
+--form-string 'message=Job Done!' \
+https://api.pushover.net/1/messages.json;
+
+#Set up your iRods command tools to log into CyVerse
+
+iinit
+
+#host = data.iplantcollaborative.org
+#port = 1247
+#zone = iplant
+#use your cyverse username and password to access private data in the datastore
+
+icd
+imkdir BLIND_BTx623_SHSL001
+
+
+###[---1.Getcha Data---]###
+# 
+# ftp: gslserver.qb3.berkeley.edu <--this is not a link, do not click on it.
+# 
+# login: gslftp
+# 
+# psswd: gsl23ftp!
+# 
+# directory: /171205_100SR_HS4KA
+# 
+# 
+
+#try WGET
+#example: wget -r ftp://1.2.3.4/dir/* --ftp-user=username --ftp-password=password
+
+mkdir ./compressed_reads
+cd ./compressed_reads
+
+wget -r ftp://gslserver.qb3.berkeley.edu/171205_100SR_HS4KA/Lane2/Hake/* --ftp-user=gslftp --ftp-password=gsl23ftp!
+
+cd ..
+icd /iplant/home/sal269/BLIND_BTx623_SHSL001
+iput -rKP -N 4 ./compressed_reads
+
+wget ftp://gslserver.qb3.berkeley.edu/171205_100SR_HS4KA/Lane2/laneBarcode.html --ftp-user=gslftp --ftp-password=gsl23ftp! --cut-dirs=3
+wget ftp://gslserver.qb3.berkeley.edu/171205_100SR_HS4KA/Lane2/Undetermined_S0_L002_R1_001.fastq.gz --ftp-user=gslftp --ftp-password=gsl23ftp! --cut-dirs=3
+
+iput -KP -N 4 ./laneBarcode.html
+iput -KP -N 4 ./Undetermined_S0_L002_R1_001.fastq.gz
+
+curl -s \
+--form-string 'token=aevxen171z5m92aup3vjg2erru9sux' \
+--form-string 'user=uq6kwmt6sqhkb7b5ur4pk7k86bi4wa' \
+--form-string 'message=FTP download and copy done!' \
+https://api.pushover.net/1/messages.json;
+
+###[---2.Unzip and QC---]###
+
+#gunzip reads
+mkdir ./raw_reads
+
+find ./compressed_reads -name "*.gz" | while read f; do
+	STEM=$(basename "${f}" _L002_R1_001.fastq.gz)
+	gunzip -c "${f}" > ./raw_reads/"${STEM}".fastq
+done
+
+#Use fastqc and multiqc to look at your sequence files and verify they are ok
+#Pay special attention to the presence of Illumina adapter sequences, these will mess up your alignments
+#If Illumina adapter sequences are detected, use a program like Trimmomatic to remove them
+
+#run fastqc in command line
+mkdir ./fastqc
+find ./raw_reads -name '*.fastq' -exec fastqc -o ./fastqc {} \;
+
+#run multiqc to summarize results
+mkdir ./multiqc
+multiqc ./fastqc -o ./multiqc
+
+#multiqc produces a .html file that will summarize all the results with handy graphs and interactive reports
+#transfer both directories to your CyVerse Datastore
+
+imkdir -p /iplant/home/sal269/VM_output/BLIND_BTx623_SHSL001/fastqc
+icd /iplant/home/sal269/VM_output/BLIND_BTx623_SHSL001
+iput -rKP -N 4 ./fastqc
+
+imkdir -p /iplant/home/sal269/VM_output/BLIND_BTx623_SHSL001/multiqc
+icd /iplant/home/sal269/VM_output/BLIND_BTx623_SHSL001
+iput -rKP -N 4 ./multiqc
+
+wait; curl -s \
+--form-string 'token=aevxen171z5m92aup3vjg2erru9sux' \
+--form-string 'user=uq6kwmt6sqhkb7b5ur4pk7k86bi4wa' \
+--form-string 'message=QC complete!' \
+https://api.pushover.net/1/messages.json;
+
+###[---3. Trim Illumina adapter sequences---]###
+
+mkdir ./trimmed_reads
+mkdir ./junk_reads
+
+# copy the latest (compiled binary) version of trimmomatic into the trimmed_reads folder
+# http://www.usadellab.org/cms/?page=trimmomatic
+# download the zipped Trimmomatic-#.##
+
+cd ./trimmed_reads
+wget "http://www.usadellab.org/cms/uploads/supplementary/Trimmomatic/Trimmomatic-0.36.zip"
+
+# unzip and copy into ./trimmed_reads
+
+unzip Trimmomatic-0.36.zip
+cd ..
+
+# ./trimmed_reads/Trimmomatic-#.## should contain trimmomatic-#.##.jar and a folder called "adapters"
+# Create trimmed fastq files in ./trimmed_reads
+# Basic command structure, use excel substitute function or cut and paste to modify for all files
+
+# Created file of NEB index primers, just incase different
+
+#java -jar ./trimmed_reads/Trimmomatic-0.36/trimmomatic-0.36.jar SE -threads 4 \			# Run a javascript named trimmomatic in paired end mode, with 4 computer processors
+#<FILENAME_R1> 																				# Read file in ./raw_reads folder -- full location and name needed
+#<SHORTNAME_R1> \																	# Provide filename for kept, trimmed reads from forward, as well as discarded and trimmed sequences (junk)
+#ILLUMINACLIP:./trimmed_reads/Trimmomatic-0.36/adapters/NEBNext-SE.fa:2:30:10 \				# Cut out all illumina Truseq3 single end adapters
+#MINLEN:25																					# Only retain reads that are longer than 25 bp after trimming
+
+find ./raw_reads -name "*.fastq" | while read f; do
+	STEM=$(basename "${f}")
+	java -jar ./trimmed_reads/Trimmomatic-0.36/trimmomatic-0.36.jar SE -threads 4 \
+	./raw_reads/"${STEM}" \
+	./trimmed_reads/"${STEM}" \
+	ILLUMINACLIP:./trimmed_reads/Trimmomatic-0.36/adapters/NEBNext-SE.fa:2:30:10 \
+	MINLEN:25
+done
+
+icd /iplant/home/sal269/VM_output/BLIND_BTx623_SHSL001
+iput -rKP -N 4 ./trimmed_reads
+
+curl -s \
+--form-string 'token=aevxen171z5m92aup3vjg2erru9sux' \
+--form-string 'user=uq6kwmt6sqhkb7b5ur4pk7k86bi4wa' \
+--form-string 'message=Trimming Done!' \
+https://api.pushover.net/1/messages.json;
+
+
+#run fastqc in command line
+mkdir ./trimmed_fastqc
+find ./trimmed_reads -name '*.fastq' -exec fastqc -o ./trimmed_fastqc {} \;
+
+#run multiqc to summarize results
+mkdir ./trimmed_multiqc
+multiqc ./trimmed_fastqc -o ./trimmed_multiqc
+
+#multiqc produces a .html file that will summarize all the results with handy graphs and interactive reports
+#transfer both directories to your CyVerse Datastore
+
+imkdir -p /iplant/home/sal269/VM_output/BLIND_BTx623_SHSL001/trimmed_fastqc
+icd /iplant/home/sal269/VM_output/BLIND_BTx623_SHSL001
+iput -frKP -N 4 ./trimmed_fastqc
+
+imkdir -p /iplant/home/sal269/VM_output/BLIND_BTx623_SHSL001/trimmed_multiqc
+icd /iplant/home/sal269/VM_output/BLIND_BTx623_SHSL001
+iput -frKP -N 4 ./trimmed_multiqc
+
+wait; curl -s \
+--form-string 'token=aevxen171z5m92aup3vjg2erru9sux' \
+--form-string 'user=uq6kwmt6sqhkb7b5ur4pk7k86bi4wa' \
+--form-string 'message=QC complete!' \
+https://api.pushover.net/1/messages.json;
+
+
+
+###[---4. Align to BTx623 genome---]###
+
+# Copy or create genome index files
+# Creating a genomic index with HISAT2
+# HISAT2 uses a series of 6 index files 
+
+#get the genome
+mkdir ./sorghum_genome
+icd /iplant/home/sal269/
+iget -rPKf -N 4 sorghum_genome
+
+# Run hisat2-build command to create index. This is much faster than with bowtie2/Tophat2. ~1 hr, 30min
+# Option -p <#> tells the command how many CPUs it may use.
+
+hisat2-build -f -p 4 ./sorghum_genome/Sbicolor_454_v3.0.1.fa ./sorghum_genome/Sbicolor_454_v3.0.1.hisat
+
+mkdir ./aligned_reads/ # make destination folder
+
+#min intron 2 max intron 1900 from Panahi et al. 2014; min intron must be greater or equal to 20
+
+find ./trimmed_reads -name "*.fastq" | while read f; do
+	STEM=$(basename "${f}" .fastq)
+	hisat2 --min-intronlen 20 --max-intronlen 1900 \
+	-p 4 -x ./sorghum_genome/Sbicolor_454_v3.0.1.hisat \
+	-U ./trimmed_reads/"${STEM}".fastq \
+	-S ./aligned_reads/"${STEM}".sam 2> ./aligned_reads/"${STEM}"_summary.txt
+done
+
+wait; imkdir /iplant/home/sal269/VM_output/BLIND_BTx623_SHSL001/aligned_reads
+icd /iplant/home/sal269/VM_output/BLIND_BTx623_SHSL001/
+iput -rKPf -N 4 ./aligned_reads
+
+
+iput -rKP -N 4 sorghum_genome
+#store created indicies. not always needed.
+
+wait; curl -s \
+--form-string 'token=aevxen171z5m92aup3vjg2erru9sux' \
+--form-string 'user=uq6kwmt6sqhkb7b5ur4pk7k86bi4wa' \
+--form-string 'message=Alignment complete!' \
+https://api.pushover.net/1/messages.json;
+
+
+###[---5. Count reads---]###
+
+mkdir ./htseq
+
+# Parallel runs with a counter
+# Remember to change 4 to N-processers
+
+find ./aligned_reads -name "*.sam" | while read f; do
+	((i=i%4)); ((i++==0)) && wait
+	STEM=$(basename "${f}" .sam)
+	htseq-count --type=gene -s no -f sam \
+	-i ID \
+	./aligned_reads/"${STEM}".sam \
+	./sorghum_genome/Sbicolor_454_v3.1.1.gene.gff3 \
+	> ./htseq/"${STEM}".count.txt &
+done
+
+icd /iplant/home/sal269/VM_output/BLIND_BTx623_SHSL001/
+iput -rKPf -N 4 ./htseq
+
+wait; curl -s \
+--form-string 'token=aevxen171z5m92aup3vjg2erru9sux' \
+--form-string 'user=uq6kwmt6sqhkb7b5ur4pk7k86bi4wa' \
+--form-string 'message=Counting complete!' \
+https://api.pushover.net/1/messages.json;
+
+###[---6. Convert reads---]###
+
+#pip install deeptools
+
+mkdir ./BAM_reads
+mkdir ./BW_reads
+for f in ./aligned_reads/*.sam; do
+  STEM=$(basename "${f}" .sam)
+  samtools sort -o ./BAM_reads/"${STEM}".bam -@ 4 "${f}"
+  samtools index ./BAM_reads/"${STEM}".bam
+  bamCoverage --bam ./BAM_reads/"${STEM}".bam -o ./BW_reads/"${STEM}".bw --normalizeUsingRPKM 
+done
+
+imkdir -p /iplant/home/sal269/VM_output/BLIND_BTx623_SHSL001/BAM_reads
+icd /iplant/home/sal269/VM_output/BLIND_BTx623_SHSL001/
+iput -rKP -N 4 ./BAM_reads
+
+imkdir -p /iplant/home/sal269/VM_output/BLIND_BTx623_SHSL001/BW_reads
+icd /iplant/home/sal269/VM_output/BLIND_BTx623_SHSL001/
+iput -rKP -N 4 ./BW_reads
+
+curl -s \
+--form-string 'token=aevxen171z5m92aup3vjg2erru9sux' \
+--form-string 'user=uq6kwmt6sqhkb7b5ur4pk7k86bi4wa' \
+--form-string 'message=Convert Done!' \
+https://api.pushover.net/1/messages.json
+
+
+###[---7. Normalize counts---]###
+
+mkdir ./deseq
+
+##run in R, on personal machine
+
+setwd("/Users/Home/Desktop/BLIND/SHSL001/BLIND_BTx623_SHSL001")
+
+library(DESeq2)
+
+file_names <- list.files(path="./htseq", pattern = "*.txt") # create a list of all txt files in the "edgeR" folder
+file_paths <- list.files(path="./htseq", pattern = "*.txt", full.names=T) # create a list of all txt files' full locations in the "edgeR" folder
+
+counts <- read.table(file_paths[1], sep="\t", header=F, row.names=1) # start by reading the first file
+colnames(counts) <- c(file_names[1]) # name the first column
+for (f in 2:length(file_paths)) { # loop over all the rest of the files
+new_file <- read.table(file_paths[f],sep="\t", header=F, row.names=1)
+print ("Merging file...")
+counts <- cbind(counts, new_file) # add on the new column
+colnames(counts) <- c(file_names[1:f]) # add on the new column's name
+}
+
+count <- head(counts,-5) #remove last 5 lines, describing reads that were not attributed to gene models
+
+dds <- DESeqDataSetFromMatrix(count, data.frame(colnames(count)), ~1, tidy = FALSE)
+dds <- estimateSizeFactors(dds)
+dds <- estimateDispersions(dds)
+vsd <- varianceStabilizingTransformation(dds)
+vsd_filtered <- assay(vsd)
+
+write.table(vsd_filtered, "./deseq/vsd_nofilter.txt", sep="\t", quote=F, row.names=T)
+
+
+dds <- DESeqDataSetFromMatrix(count, data.frame(colnames(count)), ~1, tidy = FALSE)
+dds <- estimateSizeFactors(dds)
+dds <- dds[ rowSums(counts(dds, normalized=TRUE) >= 5) > 5, ] #only consider detected genes, >= 5 RPM in more than 5 tissues
+dds <- estimateDispersions(dds)
+vsd <- varianceStabilizingTransformation(dds)
+vsd_filtered <- assay(vsd)
+
+write.table(vsd_filtered, "./deseq/vsd_5count_5min.txt", sep="\t", quote=F, row.names=T)
+
+dds <- DESeqDataSetFromMatrix(count, data.frame(colnames(count)), ~1, tidy = FALSE)
+dds <- estimateSizeFactors(dds)
+dds <- dds[ rowSums(counts(dds, normalized=TRUE) >= 5) > 46, ] #only consider detected genes, >= 5 RPM in more than 46 tissues
+dds <- estimateDispersions(dds)
+vsd <- varianceStabilizingTransformation(dds)
+vsd_filtered <- assay(vsd)
+
+write.table(vsd_filtered, "./deseq/vsd_46count_5min.txt", sep="\t", quote=F, row.names=T)
+
+pdf(file="./deseq/PCA_vsd46.5_15000.pdf", wi = 9, he = 6)
+plotPCA(vsd, intgroup='colnames.count.', ntop=15000)
+dev.off()
+
+pdf(file="./deseq/PCA_vsd46.5_10000.pdf", wi = 9, he = 6)
+plotPCA(vsd, intgroup='colnames.count.', ntop=10000)
+dev.off()
+
+pdf(file="./deseq/PCA_vsd46.5_5000.pdf", wi = 9, he = 6)
+plotPCA(vsd, intgroup='colnames.count.', ntop=5000)
+dev.off()
+
+pdf(file="./deseq/PCA_vsd46.5_1500.pdf", wi = 9, he = 6)
+plotPCA(vsd, intgroup='colnames.count.', ntop=1500)
+dev.off()
+
+pdf(file="./deseq/PCA_vsd46.5_1000.pdf", wi = 9, he = 6)
+plotPCA(vsd, intgroup='colnames.count.', ntop=1000)
+dev.off()
+
+pdf(file="./deseq/PCA_vsd46.5_500.pdf", wi = 9, he = 6)
+plotPCA(vsd, intgroup='colnames.count.', ntop=500)
+dev.off()
+
+pdf(file="./deseq/PCA_vsd46.5_50.pdf", wi = 9, he = 6)
+plotPCA(vsd, intgroup='colnames.count.', ntop=50)
+dev.off()
+
+pdf(file="./deseq/PCA_vsd46.5_15.pdf", wi = 9, he = 6)
+plotPCA(vsd, intgroup='colnames.count.', ntop=15)
+dev.off()
+
+pdf(file="./deseq/PCA_vsd46.5_5.pdf", wi = 9, he = 6)
+plotPCA(vsd, intgroup='colnames.count.', ntop=5)
+dev.off()
+
+## it WORKED!!!!!
+## 1500 gives the best rainbow arc
+## should I try painting DAS?
+
+#pick the genes with most variance
+ntop <- 1500
+# calculate the variance for each gene
+rv <- rowVars(vsd_filtered)
+# select the ntop genes by variance
+select <- order(rv, decreasing=TRUE)[seq_len(min(ntop, length(rv)))]
+
+selected_genes <- vsd_filtered[select,]
+
+write.table(vsd_filtered, "./deseq/top1500_vsd46.5.txt", sep="\t", quote=F, row.names=T)
+
+
+## Heat map and hiearch clust attempts
+
+require("pheatmap")
+require("RColorBrewer")
+require("genefilter")
+
+sampleDists <- as.dist((1-cor(selected_genes)))
+sampleDistMatrix <- as.matrix( sampleDists )
+#rownames(sampleDistMatrix) <- paste( rld$dex, rld$cell, sep = " - " )
+#colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( brewer.pal(9, "Blues") )(255)
+
+pdf(file="./deseq/Heatmap_top1500_46.5_5k.pdf", wi = 9, he = 9)
+pheatmap(1-sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         cluster_rows=TRUE, cluster_cols=TRUE,
+         cutree_rows=5, cutree_cols=5,
+         col = colors)
+dev.off()
+
+pdf(file="./deseq/Heatmap_top1500_46.5_4k.pdf", wi = 9, he = 9)
+pheatmap(1-sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         cluster_rows=TRUE, cluster_cols=TRUE,
+         cutree_rows=4, cutree_cols=4,
+         col = colors)
+dev.off()
+
+pdf(file="./deseq/Heatmap_top1500_46.5.pdf", wi = 9, he = 9)
+pheatmap(1-sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         cluster_rows=TRUE, cluster_cols=TRUE,
+         col = colors)
+dev.off()
+
+# hclust
+
+require(dendextend) #needed for sort on dendrogram
+
+sampleTree = hclust(dist(sampleDistMatrix), method = "average");
+# Plot the sample tree: Open a graphic output window of size 12 by 9 inches
+# The user should change the dimensions if the window is too large or too small.
+pdf(file = "./deseq/sampleClustering.pdf", width = 12, height = 9);
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plot(sort(sampleTree), main = "Sample clustering", sub="", xlab="", cex.lab = 1.5,
+cex.axis = 1.5, cex.main = 2)
+dev.off()
+
+
+res <- pheatmap(1-sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         cluster_rows=TRUE, cluster_cols=TRUE,
+         cutree_rows=5, cutree_cols=5,
+         col = colors)
+selected_genes.clust <- cbind(t(selected_genes), cluster = cutree(res$tree_row, k = 5))
+
+
+geneDists <- as.dist((1 - cor(t(selected_genes))))
+geneDistMatrix <- as.matrix( geneDists )
+
+colors <- colorRampPalette( brewer.pal(9, "PRGn") )(255)
+pdf(file="./deseq/GeneHeatmap_top1500_46.5.pdf", wi = 9, he = 9)
+pheatmap(1-geneDistMatrix,
+         clustering_distance_rows = geneDists,
+         clustering_distance_cols = geneDists,
+         cluster_rows=TRUE, cluster_cols=TRUE,
+         show_rownames = F, show_colnames = F,
+         col=colors)
+dev.off()
+
+pdf(file="./deseq/GenexSampleHeatmap_top1500_46.5_5k_logZ.pdf", wi = 9, he = 9)
+colors <- colorRampPalette( brewer.pal(11, "PRGn") )(11)
+pheatmap(t(scale(log(t(selected_genes)))),
+          clustering_distance_rows = geneDists,
+          clustering_distance_cols = sampleDists,
+          cluster_rows=TRUE, cluster_cols=TRUE,
+          show_rownames = F, show_colnames = T,
+          cutree_cols=5, cutree_rows=5,
+          col=colors, main="Log, z-scaled, 5 clusters x 5 clusters, Pearson")
+dev.off() 
+
+pdf(file="./deseq/GenexSampleHeatmap_top1500_46.5_4k_logZ.pdf", wi = 9, he = 9)
+colors <- colorRampPalette( rainbow(12) )(255)
+pheatmap(t(scale(log(t(selected_genes)))),
+          clustering_distance_rows = geneDists,
+          clustering_distance_cols = sampleDists,
+          cluster_rows=TRUE, cluster_cols=TRUE,
+          show_rownames = F, show_colnames = T,
+          cutree_cols=4, cutree_rows=4,
+          col=colors, main="Log, z-scaled, 4 clusters x 4 clusters, Pearson")
+dev.off() 
+
+#ALTERNATE COLORS
+colors <- colorRampPalette( c("purple3", "lemonchiffon1", "springgreen4") )(200)
+pdf(file="./deseq/GenexSampleHeatmap_top1500_46.5_5k_logZ_altC.pdf", wi = 9, he = 9)
+pheatmap(t(scale(log(t(selected_genes)))),
+          clustering_distance_rows = geneDists,
+          clustering_distance_cols = sampleDists,
+          cluster_rows=TRUE, cluster_cols=TRUE,
+          show_rownames = F, show_colnames = T,
+          cutree_cols=5, cutree_rows=5,
+          col=colors, main="Log, z-scaled, 5 clusters x 5 clusters, Pearson")
+dev.off() 
+
+pdf(file="./deseq/GenexSampleHeatmap_top1500_46.5_4k_logZ_altC.pdf", wi = 9, he = 9)
+pheatmap(t(scale(log(t(selected_genes)))),
+          clustering_distance_rows = geneDists,
+          clustering_distance_cols = sampleDists,
+          cluster_rows=TRUE, cluster_cols=TRUE,
+          show_rownames = F, show_colnames = T,
+          cutree_cols=4, cutree_rows=4,
+          col=colors, main="Log, z-scaled, 4 clusters x 4 clusters, Pearson")
+dev.off() 
+
+pdf(file="./deseq/GeneHeatmap_top1500_46.5_altC.pdf", wi = 9, he = 9)
+pheatmap(1-geneDistMatrix,
+         clustering_distance_rows = geneDists,
+         clustering_distance_cols = geneDists,
+         cluster_rows=TRUE, cluster_cols=TRUE,
+         show_rownames = F, show_colnames = F,
+         col=colors)
+dev.off()
+
+#brewer PRGn
+colors <- colorRampPalette( brewer.pal(9, "PRGn") )(255)
+pdf(file="./deseq/GenexSampleHeatmap_top1500_46.5_5k_logZ_PRGnC.pdf", wi = 9, he = 9)
+pheatmap(t(scale(log(t(selected_genes)))),
+          clustering_distance_rows = geneDists,
+          clustering_distance_cols = sampleDists,
+          cluster_rows=TRUE, cluster_cols=TRUE,
+          show_rownames = F, show_colnames = T,
+          cutree_cols=5, cutree_rows=5,
+          col=colors, main="Log, z-scaled, 5 clusters x 5 clusters, Pearson")
+dev.off() 
+
+pdf(file="./deseq/GenexSampleHeatmap_top1500_46.5_4k_logZ_PRGnC.pdf", wi = 9, he = 9)
+pheatmap(t(scale(log(t(selected_genes)))),
+          clustering_distance_rows = geneDists,
+          clustering_distance_cols = sampleDists,
+          cluster_rows=TRUE, cluster_cols=TRUE,
+          show_rownames = F, show_colnames = T,
+          cutree_cols=4, cutree_rows=4,
+          col=colors, main="Log, z-scaled, 4 clusters x 4 clusters, Pearson")
+dev.off() 
+
+pdf(file="./deseq/GeneHeatmap_top1500_46.5_PRGnC.pdf", wi = 9, he = 9)
+pheatmap(1-geneDistMatrix,
+         clustering_distance_rows = geneDists,
+         clustering_distance_cols = geneDists,
+         cluster_rows=TRUE, cluster_cols=TRUE,
+         show_rownames = F, show_colnames = F,
+         col=colors)
+dev.off()
+
+# adding a lowess or lm to PCA plot
+
+abline(lm(mpg~wt), col="red") # regression line (y~x) 
+lines(lowess(wt,mpg), col="blue") # lowess line (x,y)
+
+## copied from DESeq GitHub
+#pick the genes with most variance
+
+require("genefilter")
+ntop <- 2000
+object <- vsd
+intgroup='colnames.count.'
+
+# calculate the variance for each gene
+rv <- rowVars(assay(object))
+# select the ntop genes by variance
+select <- order(rv, decreasing=TRUE)[seq_len(min(ntop, length(rv)))]
+# perform a PCA on the data in assay(x) for the selected genes
+pca <- prcomp(t(assay(object)[select,]))
+# the contribution to the total variance for each component
+percentVar <- pca$sdev^2 / sum( pca$sdev^2 )
+if (!all(intgroup %in% names(colData(object)))) {
+stop("the argument 'intgroup' should specify columns of colData(dds)")
+}
+intgroup.df <- as.data.frame(colData(object)[, intgroup, drop=FALSE])
+# add the intgroup factors together to create a new grouping factor
+group <- if (length(intgroup) > 1) {
+factor(apply( intgroup.df, 1, paste, collapse=":"))
+} else {
+colData(object)[[intgroup]]
+}
+# assembly the data for the plot
+d <- data.frame(PC1=pca$x[,1], PC2=pca$x[,2], group=group, intgroup.df, name=colnames(object))
+
+
+require(ggplot2)
+pdf(file="./deseq/Regression_top1500_bpline3.pdf", wi = 9, he = 9)
+ggplot(data=d, aes(x=-PC1, y=PC2)) + geom_point(size=3) + 
+	xlab(paste0("-PC1: ",round(percentVar[1] * 100),"% variance")) +
+  	ylab(paste0("PC2: ",round(percentVar[2] * 100),"% variance")) +
+	coord_fixed() +
+	geom_smooth(method = "lm", formula = y ~ splines::bs(x, 3), color='green')
+dev.off()
+
+## Can you access developmental-expression time?
+
+# first set up a lowess fit:
+lfit <- loess(d$PC2~d$PC1, span=3)
+
+# create a functional version of the lowess fit
+lfun <- approxfun(lfit)
+fitted <- lfun(d$PC1)
+resid <- d$PC2-fitted
+
+#try some splines instead
+smod <- lm(formula = d$PC2 ~ splines::bs(d$PC1, 3)) 
+sfit <- data.frame(predict(smod))
+df <- data.frame(PC1 = d$PC1, PC2 = d$PC2, sfit, d$name)
+colnames(df)[3:4] <- c("fit", "name")
+
+pdf(file="./deseq/Regression_top1500_bpline3_lmPlots.pdf", wi = 9, he = 9)
+ggplot(data=df, aes(x=-PC1, y=PC2)) + 
+	xlab(paste0("-PC1: ",round(percentVar[1] * 100),"% variance")) +
+  	ylab(paste0("PC2: ",round(percentVar[2] * 100),"% variance")) +
+	geom_point() + 
+	stat_smooth(method="lm", formula= y~splines::bs(x,3), se=F, color="cornflowerblue") +
+	geom_point(aes(-PC1, df$fit), size=3, color="purple")
+dev.off()
+
+#gives y, pred values as function of x, try extracting line values and assign to regression based on euclidian distance
+p <- ggplot(data=df, aes(PC1, PC2)) + 
+		geom_point() + 
+		stat_smooth(method="lm", formula= y~splines::bs(x,3), se=F, color="cornflowerblue", n=1000) +
+		geom_point(aes(PC1, df$fit), size=1, color="purple")
+sline <- ggplot_build(p)$data[[2]][1:2] #extract data from ggplot object
+sline <- cbind(sline, "rank"=c(1:nrow(sline)))
+
+require(spatstat) #designed for comparing ppp point objects
+
+#create point objects with large windows, does it matter?
+sppp <- as.ppp(sline, W=c(c(-60,60), c(-60,60))) 
+dppp <- ppp(d$PC1, d$PC2, window=owin(c(-60,60), c(-60,60)))
+
+#calculate nearest and get distance -- of limited use here
+ddist <- nncross(X=dppp, Y=sppp, k=1)
+
+#pull out spline x, y, and rank
+sbest <- sline[ddist$which,] 
+
+pdf(file="./deseq/Regression_top1500_bpline3_xPredvsnCross.pdf", wi = 9, he = 9)
+ggplot(data=df, aes(-PC1, PC2)) + 
+	xlab(paste0("-PC1: ",round(percentVar[1] * 100),"% variance")) +
+  	ylab(paste0("PC2: ",round(percentVar[2] * 100),"% variance")) +
+	geom_point() + 
+	stat_smooth(method="lm", formula= y~splines::bs(x,3), se=F, color="cornflowerblue", n=1000) +
+	geom_point(aes(-PC1, df$fit), size=2, color="purple") +
+	geom_point(aes(-sbest$x, sbest$y), size=3, color="red")
+dev.off()
+
+pdf(file="./deseq/Regression_top1500_bpline3_nCross.pdf", wi = 9, he = 9)
+ggplot(data=df, aes(-PC1, PC2)) + 
+	xlab(paste0("-PC1: ",round(percentVar[1] * 100),"% variance")) +
+  	ylab(paste0("PC2: ",round(percentVar[2] * 100),"% variance")) +
+	geom_point() + 
+	stat_smooth(method="lm", formula= y~splines::bs(x,3), se=F, color="cornflowerblue", n=1000) +
+	geom_point(aes(-sbest$x, sbest$y), size=1, color="red")
+dev.off()
+
+df <- cbind(df, (1000-sbest$rank)/100)
+colnames(df)[5] <- "ETU"
+
+pdf(file="./deseq/ColorCode_top1500_bpline3_nCross.pdf", wi = 9, he = 9)
+ggplot(data=df, aes(-PC1, PC2, color=ETU)) +
+	xlab(paste0("-PC1: ",round(percentVar[1] * 100),"% variance")) +
+  	ylab(paste0("PC2: ",round(percentVar[2] * 100),"% variance")) +
+	geom_point(color="black", size = 4) +
+	geom_point(size = 3) +
+	scale_color_distiller(palette="Spectral") 
+dev.off()
+
+pdf(file="./deseq/ColorCode_top1500_ETUdist.pdf", wi = 9, he = 3)
+ggplot(data=df, aes(x=0, y=ETU, color=ETU)) +
+		ylab("Expression Time Units") +
+		geom_violin() +
+		geom_point(color="black", size = 4) +
+		geom_point(size = 3) +
+		scale_color_distiller(palette="Spectral") +
+		coord_flip() 
+dev.off()
+
+##import DAS, cut and paste
+das <- read.table(stdin(), header=F)
+
+df <- cbind(df, das$V1)
+colnames(df)[6] <- "DAS"
+
+
+pdf(file="./deseq/DASvETU_top1500.pdf", wi = 9, he = 3)
+ggplot(data=df, aes(x=ETU, y=DAS)) +
+		xlab("Expression Time Units") +
+		ylab("Days After Sowing") +
+		geom_point(color="black", size = 4) +
+		geom_point(color="grey70", size = 3) +
+		stat_smooth(method="lm")
+dev.off()
+
+DvE <- lm(df$ETU ~ df$DAS)
+
+##R^2 is 0.75 -- DAS explains a lot, but not everything
+
+#Call:
+#lm(formula = df$ETU ~ df$DAS)
+#
+#Residuals:
+#    Min      1Q  Median      3Q     Max 
+#-2.4100 -0.8498 -0.1761  0.4770  4.7283 
+#
+#Coefficients:
+#             Estimate Std. Error t value Pr(>|t|)    
+#(Intercept) -27.98728    2.84357  -9.842 8.54e-13 ***
+#df$DAS        0.48805    0.04149  11.763 2.53e-15 ***
+#---
+#Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+#
+#Residual standard error: 1.473 on 45 degrees of freedom
+#Multiple R-squared:  0.7546,	Adjusted R-squared:  0.7491 
+#F-statistic: 138.4 on 1 and 45 DF,  p-value: 2.532e-15
+
+write.table(df, file="./deseq/ETU_vsd_46count_5min.txt", sep="\t", quote=F)
+
+### Revisit heatmaps with ETU values
+
+require("pheatmap")
+require("RColorBrewer")
+require("genefilter")
+
+sampleDists <- as.dist((1-abs(cor(selected_genes))))
+sampleDistMatrix <- as.matrix( sampleDists )
+#rownames(sampleDistMatrix) <- paste( rld$dex, rld$cell, sep = " - " )
+#colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( brewer.pal(9, "Blues") )(255)
+
+an_col <- data.frame(df$ETU)
+rownames(an_col) <- df$name
+colnames(an_col)[1] <- "ETU"
+
+#snag the ggplot colors
+p <- ggplot(data=df, aes(x=0, y=ETU, color=ETU)) +
+		ylab("Expression Time Units") +
+		geom_violin() +
+		geom_point(color="black", size = 4) +
+		geom_point(size = 3) +
+		scale_color_distiller(palette="Spectral") +
+		coord_flip() 
+pg <- ggplot_build(p)
+color_data <- pg$data[[3]]
+
+an_colors <- list ( DTU = color_data[,1])
+#attach to other data
+df <- cbind(df, an_colors)
+colnames(df)[7] <- "ETU_color"
+
+
+pheatmap(1-sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         cluster_rows=TRUE, cluster_cols=F,
+         cutree_rows=5, cutree_cols=5,
+         col = colors,
+         annotation_col = an_col,
+         annotation_colors = an_colors
+         )
+
+
+ordered_genes <- selected_genes[,order(df$ETU)]
+sampleDists <- as.dist((1-abs(cor(ordered_genes))))
+sampleDistMatrix <- as.matrix( sampleDists )
+#rownames(sampleDistMatrix) <- paste( rld$dex, rld$cell, sep = " - " )
+#colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( brewer.pal(9, "Blues") )(255)
+
+an_col <- data.frame(df$ETU)
+rownames(an_col) <- df$name
+colnames(an_col)[1] <- "ETU"
+
+an_colors <- list ( ETU = as.character(df$ETU_color))
+
+
+pdf(file="./deseq/ETU_sampleHeatmap_top1500_46.5_4k.pdf", he = 9, wi = 9)
+pheatmap(1-sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         cluster_rows=T, cluster_cols=T,
+         cutree_rows=4, cutree_cols=4,
+         col = colors,
+         annotation_col = an_col,
+         annotation_colors = an_colors)
+dev.off()
+
+pdf(file="./deseq/ETU_sampleHeatmap_top1500_46.5_5k.pdf", he = 9, wi = 9)
+pheatmap(1-sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         cluster_rows=T, cluster_cols=T,
+         cutree_rows=5, cutree_cols=5,
+         col = colors,
+         annotation_col = an_col,
+         annotation_colors = an_colors)
+dev.off()
+
+
+#samples x genes
+
+geneDists <- as.dist((1 - cor(t(ordered_genes))))
+geneDistMatrix <- as.matrix( geneDists )
+
+colors <- colorRampPalette( c("purple3", "lemonchiffon1", "springgreen4") )(200)
+pdf(file="./deseq/ETU_GenexSampleHeatmap_top1500_46.5_4k_logZ_altC.pdf", wi = 9, he = 9)
+pheatmap(t(scale(t(ordered_genes))),
+          clustering_distance_rows = geneDists,
+          clustering_distance_cols = sampleDists,
+          cluster_rows=TRUE, cluster_cols=TRUE,
+          show_rownames = F, show_colnames = T,
+          cutree_cols=4, cutree_rows=4,
+          annotation_col = an_col,
+          annotation_colors = an_colors,
+          col=colors, main="Log, z-scaled, 4 clusters x 4 clusters, Pearson")
+dev.off() 
+
+genePheat <- pheatmap(1-sampleDistMatrix)
+
+## add cluster info to sample dataframe and export
+
+df.pre <- df
+rownames(df.pre) <- df[,4]
+
+geneClust <- data.frame(cutree(genePheat$tree_row, k = 4))
+
+df.clust <- merge(df.pre, geneClust, by=0, all=TRUE)
+colnames(df.clust)[9] <- "k4_clust"
+
+df.clust[,1] <- NULL
+rownames(df.clust) <- df.clust[,4]
+
+geneClust <- data.frame(cutree(genePheat$tree_row, k = 5))
+
+df.clust <- merge(df.clust, geneClust, by=0, all=TRUE)
+colnames(df.clust)[10] <- "k5_clust"
+
+write.table(df.clust, "./deseq/geneClust_info.txt", sep="\t", quote=F)
+
+
+
+#### TRY using BLIND in matlab
+# concern: BLIND gives index of order only, looks like distance was inferred from moving average (span 3)
+# BLIND might be useful for determining order, only
+# perhaps lowess or linear regression on PC space will be best to determine developmental trajectory
+
+# BLIND uses .mat data format to store "'DATA' variable in it representing expression matrix"
+# Can use the R.matlab library, writeMat() to export
+
+require(R.matlab)
+
+genes <- (vsd_filtered)
+writeMat("./deseq/vsd_46count_5min.mat", DATA=genes)
+
+# Looks pretty shitty
+
+
+
+
+
+#### TRY SOMs of SHSL001 data
+
+# all the packages needed for this analysis
+# 'require' will load the package, if not already loaded into your workspace
+# will return an error if the package is not available on your computer
+
+require(kohonen)
+require(reshape)
+require(colorRamps)
+require(ggplot2)
+
+# read data into a data.frame named 'res'
+# in this case, 'res <- t(scale(log(t(selected_genes))) as defined above
+# the kohonen package works with a data type called a data.matrix
+# it's easy to make from a data.frame
+
+res <- t(scale(t(ordered_genes)))
+fitted_cpm <- data.matrix(res)
+
+# use the kohonen package to create a 'grid' of nodes
+# empirically test the largest grid you can produce without any empty nodes
+
+som_grid <- somgrid(xdim=10, ydim=10, topo="hexagonal")
+
+# run the clustering algorithm, rlen = number of iterations, alpha = decaying learning rate
+
+som_model <- som(fitted_cpm, grid=som_grid, rlen=10000, alpha=c(0.15,0.01), keep.data = TRUE)
+
+# might be fun to check some of the kohonen object diagnostic plots
+# try one type at a type
+# plot(som_model, type = c("codes", "changes", "counts", "dist.neighbours", "mapping", "property", "quality"))
+
+# extract and plot the data, but first write to file
+
+som_result <- cbind(fitted_cpm, as.factor(som_model$unit.classif))
+colnames(som_result)[ncol(som_result)] <- "Node"  # change last column name to Node
+write.table(som_result, file="SOM_10x10_Dec15.txt", sep="\t", quote=F)
+
+# as a heatmap (dendrogram optional: dendrogram = c("both","row","column","none"))
+
+#som_sorted <- som_result[order(som_result[,ncol(som_result)]),]
+#som_colors <- primary.colors(length(levels(as.factor(som_model$unit.classif))))[som_result[,ncol(som_result)]]
+#heatmap.2(t(som_result[,ncol(som_result)]), Rowv=F, Colv=F, scale="column", ColSideColors=som_colors, trace="none", col="topo.colors")
+
+# as line graphs (this one was hard to code)
+
+
+node_values <- as.matrix(data.frame(som_model$codes)) #the 'codes' data.frame created by the kohonen package contains all the node values
+rownames(node_values) <- c(1:nrow(data.frame(som_model$codes)))  #very ugly way to make clean rownames
+node <- melt(as.matrix(node_values), varnames=c("Node", "Tissue"))  #separate node names and values to a long, value-by-value format
+colnames(node)[3] <- "CPM" # add back label for CPM values
+somplot <- melt(as.matrix(fitted_cpm), varnames=c("GeneID", "Tissue"))
+somplot <- cbind(somplot, som_result[,ncol(som_result)][as.character(somplot[,1])]) #look up Node in som_result by GeneID in somplot
+colnames(somplot)[3:4] <- c("CPM", "Node")
+
+pdf(file="som_linegraph.pdf", wi=9, he=9)
+ggplot(data = somplot, aes(x=Tissue, y=CPM, group=GeneID, color=as.factor(Node))) + 
+	geom_line(color="grey40", alpha=0.6) + 
+	geom_line(data = node, aes(x=Tissue, y=CPM, group=Node), color = "purple4") + 
+	theme_bw() + 
+	facet_wrap(~Node, scales="free") + 
+	ylab("Relative Expression")
+dev.off()
+
+
+
+#### TRY WGCNA of SHSL001 data
+
+###which genes?
+
+require(WGCNA)
+allowWGCNAThreads()
+
+genes <- t(vsd_filtered)
+
+#check for missing data
+gsg = goodSamplesGenes(genes, verbose = 3);
+summary(gsg)
+
+#15841 genes considered
+
+
+#check sample clustering
+
+sampleTree = hclust(dist(genes), method = "average");
+# Plot the sample tree: Open a graphic output window of size 12 by 9 inches
+# The user should change the dimensions if the window is too large or too small.
+pdf(file = "./wgcna/sampleClustering_46.5.pdf", width = 12, height = 9);
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5,
+cex.axis = 1.5, cex.main = 2)
+dev.off()
+
+# Choose a set of soft-thresholding powers
+powers = c(1:50)
+# Call the network topology analysis function
+sft = pickSoftThreshold(genes, powerVector = powers, verbose = 5)
+# Plot the results:
+pdf("./wgcna/threshold_selection_to50.pdf", wi = 12, he = 6)
+par(mfrow = c(1,2));
+cex1 = 0.9;
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+labels=powers,cex=cex1,col="red");
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.90,col="red")
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+dev.off()
+
+
+#Soft-threshold fit curve is very strange-- this might not work
+#New analysis power threshold
+softPower = 27;
+
+
+adjacency = adjacency(genes, type="signed", power = softPower);
+
+# Turn adjacency into topological overlap
+TOM = TOMsimilarity(adjacency, TOMType="signed", verbose=3);
+dissTOM = 1-TOM
+
+save(TOM, dissTOM, file = "./wgcna/networkConstruction-TOM.RData")
+
+# Call the hierarchical clustering function
+geneTree = hclust(as.dist(dissTOM), method = "average");
+# Plot the resulting clustering tree (dendrogram)
+pdf("./wgcna/geneClustering.pdf", height=9, width=12)
+plot(geneTree, xlab="", sub="", main = "Gene clustering on TOM-based dissimilarity",
+labels = FALSE, hang = 0.04);
+dev.off()
+
+# I like smaller modules
+minModuleSize = 50;
+# Module identification using dynamic tree cut:
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM,
+	deepSplit = 4, pamStage= TRUE, pamRespectsDendro = TRUE,
+	minClusterSize = minModuleSize);
+write.table(table(dynamicMods), file="./wgcna/moduleSizes.txt", sep="\t",
+	quote=F)
+
+# Convert numeric lables into colors
+dynamicColors = labels2colors(dynamicMods)
+# Plot the dendrogram and colors underneath
+pdf(file="./wgcna/firstDendrogram.pdf", wi = 9, he = 6)
+plotDendroAndColors(geneTree, dynamicColors, "Dynamic Tree Cut",
+					dendroLabels = FALSE, hang = 0.03,
+					addGuide = TRUE, guideHang = 0.05,
+main = "Gene dendrogram and module colors")
+dev.off()
+
+# Calculate eigengenes
+MEList = moduleEigengenes(genes, colors = dynamicColors)
+MEs = MEList$eigengenes
+# Calculate dissimilarity of module eigengenes
+MEDiss = 1-cor(MEs);
+# Cluster module eigengenes
+METree = hclust(as.dist(MEDiss), method = "average");
+# Plot the result
+pdf(file="./wgcna/moduleClustering.pdf", width=7, height=6)
+plot(METree, main = "Clustered module eigengenes",
+	xlab = "", sub = "")
+MEDissThres = 0.15
+# Plot the cut line into the dendrogram
+abline(h=MEDissThres, col = "red")
+dev.off()
+
+# Call an automatic merging function
+merge = mergeCloseModules(genes, dynamicColors, cutHeight = MEDissThres, relabel = TRUE, verbose = 3)
+# The merged module colors
+mergedColors = merge$colors;
+# Eigengenes of the new merged modules:
+mergedMEs = merge$newMEs;
+
+write.table(table(mergedColors), file="./wgcna/merged_moduleSizes.txt", sep="\t",
+	quote=F)
+
+pdf(file = "./wgcna/changeDendrogram.pdf", wi = 9, he = 6)
+plotDendroAndColors(geneTree, cbind(dynamicColors, mergedColors),
+					c("Dynamic Tree Cut", "Merged dynamic"),
+					dendroLabels = FALSE, hang = 0.03,
+					addGuide = TRUE, guideHang = 0.05)
+dev.off()
+
+pdf(file = "./wgcna/mergedDendrogram.pdf", wi = 9, he = 6)
+plotDendroAndColors(geneTree, mergedColors,
+					"Merged dynamic",
+					dendroLabels = FALSE, hang = 0.03,
+					addGuide = TRUE, guideHang = 0.05)
+dev.off()
+
+# Rename to moduleColors
+moduleColors = mergedColors
+# Construct numerical labels corresponding to the colors
+colorOrder = c("grey", standardColors(50));
+moduleLabels = match(moduleColors, colorOrder)-1;
+MEs = mergedMEs;
+# Save module colors and labels for use in subsequent parts
+save(MEs, moduleLabels, moduleColors, geneTree, file = "./wgcna/networkConstruction-stepByStep.RData")
+
+
+modNames = substring(names(MEs), 3)
+geneModuleMembership = as.data.frame(cor(genes, MEs, use = "p"));
+
+
+for (module in modNames)
+	{
+	# Select module probes
+	modGenes = (moduleColors==module)
+	# Get their entrez ID codes
+	modLLIDs = colnames(genes)[modGenes];
+	# Write them into a file
+	fileName = paste("./wgcna/IDs-", module, ".txt", sep="");
+	write.table(as.data.frame(modLLIDs), file = fileName, row.names = FALSE, col.names = FALSE, quote=F, sep="\t")
+	}
+
+write.table(data.frame(colnames(genes), moduleColors), file="./wgcna/allMergedMod_IDs_core.txt", row.names = FALSE, col.names = FALSE, quote=F, sep="\t")
+
+
+#EXPORT TO CYTOSCAPE
+
+for (module in modNames)
+	{
+	# Select module probes
+	modGenes = (moduleColors==module)
+	# Get their entrez ID codes
+	modLLIDs = colnames(genes)[modGenes];
+	#select TOM
+	modTOM = TOM[modGenes, modGenes];	
+	# export to cytoscape
+	exportNetworkToCytoscape( modTOM, 
+	edgeFile = paste("./wgcna/TOM_", module, "_edges.txt", sep=""),
+	nodeFile = paste("./wgcna/TOM_", module, "_nodes.txt", sep=""),
+	weighted = TRUE,
+	threshold = 0.01,
+	nodeNames = modLLIDs,
+	nodeAttr = module);	
+	}
+
+
+
+exportNetworkToCytoscape( TOM, 
+				edgeFile = "./wgcna/TOM_all_edges.05.txt",
+				nodeFile = "./wgcna/TOM_all_nodes.05.txt",
+				weighted = TRUE,
+				threshold = 0.05,
+				nodeNames = colnames(genes),
+				nodeAttr = moduleColors);
+
+exportNetworkToCytoscape( TOM, 
+				edgeFile = "./wgcna/TOM_all_edges.10.txt",
+				nodeFile = "./wgcna/TOM_all_nodes.10.txt",
+				weighted = TRUE,
+				threshold = 0.10,
+				nodeNames = colnames(genes),
+				nodeAttr = moduleColors);
+
+exportNetworkToCytoscape( TOM, 
+				edgeFile = "./wgcna/TOM_all_edges.09.txt",
+				nodeFile = "./wgcna/TOM_all_nodes.09.txt",
+				weighted = TRUE,
+				threshold = 0.09,
+				nodeNames = colnames(genes),
+				nodeAttr = moduleColors);
+
+### try correlating WGCNA modules with expression
+
+# Define numbers of genes and samples
+# Col = gene
+# Row = samples
+#nGenes = ncol(datExpr);
+#nSamples = nrow(datExpr);
+# Recalculate MEs with color labels
+#MEs0 = moduleEigengenes(datExpr, moduleColors)$eigengenes
+#MEs = orderMEs(MEs0)
+
+datTraits <- df.clust
+rownames(datTraits) <- df.clust[,1]
+nSamples <- nrow(datTraits)
+datTraits <- subset(datTraits, select = -c(1,5,8))
+
+moduleTraitCor = cor(MEs, datTraits, use = "p")
+write.table(moduleTraitCor, file="./wgcna/moduleTraitCorrelation.txt", quote=F, sep="\t")
+
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples);
+write.table(moduleTraitPvalue, file="./wgcna/moduleTraitPvalue.txt", quote=F, sep="\t")
+
+
+pdf(file = "./wgcna/moduleTraitCorrelation.pdf", wi = 10, he = 6)
+# Will display correlations and their p-values
+textMatrix = paste(signif(moduleTraitCor, 2), " p=",
+signif(moduleTraitPvalue, 1), "", sep = "");
+dim(textMatrix) = dim(moduleTraitCor)
+par(mar = c(3, 8.5, 4, 3));
+# Display the correlation values within a heatmap plot
+labeledHeatmap(Matrix = moduleTraitCor,
+xLabels = names(datTraits),
+yLabels = names(MEs),
+ySymbols = names(MEs),
+colorLabels = FALSE,
+colors = blueWhiteRed(50),
+textMatrix = textMatrix,
+setStdMargins = FALSE,
+cex.text = 0.5,
+zlim = c(-1,1),
+main = paste("Module-trait relationships"))
+dev.off()
